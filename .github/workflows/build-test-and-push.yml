@@ -2,10 +2,18 @@ name: ci
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*.*.*"
+  pull_request:
+  release:
+    types: [created]
 
 env:
-  TEST_TAG: visualphoenix/sshd:test
-  LATEST_TAG: visualphoenix/sshd:latest
+  IMAGE_ID: visualphoenix/sshd
+  TEST_TAG: test
+  LATEST_TAG: latest
 
 jobs:
   docker:
@@ -13,6 +21,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: openssh-client
+          version: 1.0
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # list of Docker images to use as base name for tags
+          images: |
+            ${{ env.IMAGE_ID }}            
+          # generate Docker tags based on the following events/attributes
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
       
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -31,11 +60,10 @@ jobs:
         with:
           context: .
           load: true
-          tags: ${{ env.TEST_TAG }}
+          tags: ${{ env.IMAGE_ID }}:${{ env.TEST_TAG }}
 
       - name: Install SSH client and generate SSH key
         run: |
-          sudo apt-get update && sudo apt-get install -y openssh-client
           ssh-keygen -t rsa -b 4096 -f id_rsa -q -N ""
           base64 -w0 id_rsa.pub > id_rsa.pub.b64
           echo "AUTHORIZED_KEYS=$(cat id_rsa.pub.b64)" >> $GITHUB_ENV
@@ -45,7 +73,7 @@ jobs:
           docker run -d --name sshd_test \
             -p 127.0.0.1:2222:22 \
             -e AUTHORIZED_KEYS="${{ env.AUTHORIZED_KEYS }}" \
-            ${{ env.TEST_TAG }}
+            ${{ env.IMAGE_ID }}:${{ env.TEST_TAG }}
 
       - name: Test SSH connection
         run: |
@@ -68,11 +96,20 @@ jobs:
             sleep 0.1
           done
           echo "SSH connection successful!"
-      
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.LATEST_TAG }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Docker Hub Description
+        uses: peter-evans/dockerhub-description@v4
+        if: github.event_name != 'pull_request'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE_ID }}
+          short-description: ${{ github.event.repository.description }}
