@@ -18,6 +18,7 @@ RUN apk add --no-cache openssh socat tini bash rsyslog \
   -e 's/^[#]*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' \
   /etc/ssh/sshd_config \
  && echo "StreamLocalBindUnlink yes" >> /etc/ssh/sshd_config \
+ && echo "StreamLocalBindMask 0111" >> /etc/ssh/sshd_config \
  && mkdir -p /etc/rsyslog.d/ \
  && sed -i'' \
   -e 's/module(load="imklog")/#module(load="imklog")/' \
